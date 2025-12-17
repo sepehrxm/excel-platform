@@ -6,6 +6,7 @@
     <title>Mashhad Leather Pricing Platform</title>
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/handsontable/dist/handsontable.full.min.css">
     <script src="https://cdn.jsdelivr.net/npm/handsontable/dist/handsontable.full.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/hyperformula/dist/hyperformula.full.min.js"></script>
     <style>
         body { font-family: 'Segoe UI', Arial, sans-serif; margin: 0; background: #fff; }
         .topbar { background: #f1f3f4; padding: 10px 20px; border-bottom: 1px solid #dadce0; display: flex; justify-content: space-between; align-items: center; }
@@ -19,7 +20,7 @@
         button { padding: 8px 16px; background: #1a73e8; color: white; border: none; border-radius: 4px; cursor: pointer; }
         button:hover { background: #1669c1; }
         input[type="file"] { margin: 10px 0; }
-        .ht_master .htCore thead th { font-weight: bold; background: #f1f3f4; }  /* FIX: Bold headers like Google Sheets */
+        .ht_master .htCore thead th { font-weight: bold; background: #f1f3f4; }
     </style>
 </head>
 <body>
@@ -62,26 +63,35 @@
     </div>
 
     <script>
-        const data = {{ data | safe }};
+        let data = {{ data | safe }};
+        let headers = [];
+        if (data.length > 0) {
+            headers = data[0];
+            data = data.slice(1);
+        }
         const readonlyColumns = {{ readonly_columns | tojson | safe }}.map(col => col.charCodeAt(0) - 65);
 
         const container = document.getElementById('hot');
         const hot = new Handsontable(container, {
             data: data,
             rowHeaders: true,
-            colHeaders: true,
+            colHeaders: function(col) {
+                return headers[col] || String.fromCharCode(65 + col);
+            },
             height: 'auto',
             width: '100%',
             licenseKey: 'non-commercial-and-evaluation',
-            fixedRowsTop: 1,  // FIX: Freeze headers
-            filters: true,  // FIX: Enable column filters
-            dropdownMenu: true,  // FIX: Dropdown for filters/sorting
-            renderer: 'html',  // FIX: Allow HTML (for images)
+            filters: true,
+            dropdownMenu: true,
+            renderer: 'html',  // For images
+            formulas: {
+                engine: HyperFormula  // For formula computation
+            },
             cells: function(row, col) {
                 const cellProperties = {};
-                if (row === 0 || readonlyColumns.includes(col)) {
+                if (readonlyColumns.includes(col)) {
                     cellProperties.readOnly = true;
-                    cellProperties.className = 'htReadOnly';  // Gray out read-only
+                    cellProperties.className = 'htReadOnly';
                 }
                 return cellProperties;
             }
@@ -93,9 +103,9 @@
             const input = document.createElement('input');
             input.type = 'hidden';
             input.name = 'data';
-            // Strip HTML for saving (keep text, or handle as-is if needed)
-            const strippedData = hot.getData().map(row => row.map(cell => cell.replace(/<[^>]+>/g, '')));  // Optional: strip tags on save
-            input.value = JSON.stringify(strippedData);  // Or use hot.getData() if keeping HTML
+            const currentData = hot.getSourceData();  // Get source with formulas
+            const fullData = [headers, ...currentData];
+            input.value = JSON.stringify(fullData);
             form.appendChild(input);
             const saveInput = document.createElement('input');
             saveInput.type = 'hidden';
@@ -108,4 +118,3 @@
     </script>
 </body>
 </html>
-
