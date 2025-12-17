@@ -1,38 +1,68 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-    <title>Dashboard</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Excel Platform</title>
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/handsontable/dist/handsontable.full.min.css">
     <script src="https://cdn.jsdelivr.net/npm/handsontable/dist/handsontable.full.min.js"></script>
+    <style>
+        body { font-family: 'Segoe UI', Arial, sans-serif; margin: 0; background: #fff; }
+        .topbar { background: #f1f3f4; padding: 10px 20px; border-bottom: 1px solid #dadce0; display: flex; justify-content: space-between; align-items: center; }
+        .topbar h1 { margin: 0; font-size: 18px; color: #202124; }
+        .topbar .user { color: #5f6368; font-size: 14px; }
+        .topbar a { margin-left: 20px; color: #1a73e8; text-decoration: none; }
+        .container { padding: 20px; max-width: 1400px; margin: 0 auto; }
+        .section { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 1px 2px rgba(0,0,0,0.1); margin-bottom: 20px; }
+        .flashed { background: #d2e3fc; color: #185abc; padding: 10px; border-radius: 4px; margin-bottom: 20px; }
+        #hot { height: 600px; overflow: hidden; }
+        button { padding: 8px 16px; background: #1a73e8; color: white; border: none; border-radius: 4px; cursor: pointer; }
+        button:hover { background: #1669c1; }
+        input[type="file"] { margin: 10px 0; }
+    </style>
 </head>
 <body>
-    <h1>Welcome, {{ current_user.email }} {% if is_admin %}(Admin){% endif %}</h1>
-    <a href="/logout">Logout</a> | {% if is_admin %}<a href="/register">Invite/Register User</a> | <a href="/logs">View Logs</a>{% endif %}
-    {% with messages = get_flashed_messages() %}
-        {% if messages %}<ul>{% for message in messages %}<li>{{ message }}</li>{% endfor %}</ul>{% endif %}
-    {% endwith %}
+    <div class="topbar">
+        <h1>Excel Platform</h1>
+        <div class="user">
+            {{ current_user.email }} {% if is_admin %}(Admin){% endif %}
+            <a href="/logout">Sign out</a>
+            {% if is_admin %}<a href="/register">Invite user</a> <a href="/logs">View logs</a>{% endif %}
+        </div>
+    </div>
+    <div class="container">
+        {% with messages = get_flashed_messages() %}
+            {% if messages %}<div class="flashed">{% for msg in messages %}{{ msg }}<br>{% endfor %}</div>{% endif %}
+        {% endwith %}
 
-    <h2>Upload Excel</h2>
-    <form method="POST" enctype="multipart/form-data">
-        <input type="file" name="upload">
-        <input type="submit" value="Upload">
-    </form>
+        <div class="section">
+            <h2>Upload Excel File</h2>
+            <form method="POST" enctype="multipart/form-data">
+                <input type="file" name="upload" accept=".xlsx">
+                <button type="submit">Upload</button>
+            </form>
+        </div>
 
-    {% if is_admin %}
-    <h2>Set Read-Only Columns</h2>
-    <form method="POST">
-        Columns (comma-separated, e.g., A,B): <input type="text" name="readonly_columns" value="{{ ','.join(readonly_columns) }}">
-        <input type="submit" value="Save">
-    </form>
-    {% endif %}
+        {% if is_admin %}
+        <div class="section">
+            <h2>Admin: Lock Columns</h2>
+            <form method="POST">
+                <input type="text" name="readonly_columns" placeholder="e.g., A,B" value="{{ ','.join(readonly_columns) }}" style="width: 300px; padding: 8px;">
+                <button type="submit">Save Locks</button>
+            </form>
+        </div>
+        {% endif %}
 
-    <h2>Sheet View</h2>
-    <div id="hot" style="width: 100%; height: 400px; overflow: auto;"></div>
-    <button onclick="saveChanges()">Save Changes</button>
+        <div class="section">
+            <h2>Spreadsheet</h2>
+            <div id="hot"></div>
+            <button onclick="saveChanges()" style="margin-top: 10px;">Save Changes</button>
+        </div>
+    </div>
 
     <script>
         const data = {{ data | safe }};
-        const readonlyColumns = {{ readonly_columns | tojson | safe }}.map(col => col.charCodeAt(0) - 65);  // e.g., 'A' -> 0
+        const readonlyColumns = {{ readonly_columns | tojson | safe }}.map(col => col.charCodeAt(0) - 65);
 
         const container = document.getElementById('hot');
         const hot = new Handsontable(container, {
@@ -40,19 +70,22 @@
             rowHeaders: true,
             colHeaders: true,
             height: 'auto',
-            width: 'auto',
-            licenseKey: 'non-commercial-and-evaluation',  // For non-commercial use
-            cells: function(row, col, prop) {
-                if (readonlyColumns.includes(col) || row === 0) {  // Headers read-only + specified columns
-                    return { readOnly: true };
+            width: '100%',
+            licenseKey: 'non-commercial-and-evaluation',
+            fixedRowsTop: 1,  // Freeze header row like Google Sheets
+            cells: function(row, col) {
+                if (row === 0 || readonlyColumns.includes(col)) {
+                    return { readOnly: true, className: 'htReadOnly' };
                 }
+            },
+            afterSelectionEnd: function(r, c) {
+                // Optional: subtle selection style
             }
         });
 
         function saveChanges() {
             const form = document.createElement('form');
             form.method = 'POST';
-            form.action = '/dashboard';
             const input = document.createElement('input');
             input.type = 'hidden';
             input.name = 'data';
