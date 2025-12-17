@@ -8,6 +8,7 @@ from datetime import datetime
 import openpyxl
 import urllib.parse as urlparse
 import ssl  # Add this import at the top if not already there
+import urllib.parse as urlparse
 
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'super_secret_key')  # Use env var in production
@@ -17,6 +18,7 @@ login_manager.init_app(app)
 login_manager.login_view = 'login'
 
 # Database connection function
+
 def get_db_connection():
     parsed = urlparse.urlparse(os.environ['DATABASE_URL'])
     conn = psycopg2.connect(
@@ -25,17 +27,48 @@ def get_db_connection():
         password=parsed.password,
         host=parsed.hostname,
         port=parsed.port,
-        sslmode='require'  # This enables SSL, required by Render Postgres
+        sslmode='require'
     )
+    conn.autocommit = True  # Important for CREATE TABLE
     return conn
+
 def init_db():
-    conn = get_db_connection()
-    c = conn.cursor()
-    c.execute('''CREATE TABLE IF NOT EXISTS users (id SERIAL PRIMARY KEY, email TEXT UNIQUE, password TEXT, is_admin INTEGER DEFAULT 0)''')
-    c.execute('''CREATE TABLE IF NOT EXISTS sheet_data (id SERIAL PRIMARY KEY, data TEXT, readonly_columns TEXT)''')
-    c.execute('''CREATE TABLE IF NOT EXISTS logs (id SERIAL PRIMARY KEY, user_email TEXT, action TEXT, timestamp TEXT)''')
-    conn.commit()
-    conn.close()
+    try:
+        conn = get_db_connection()
+        c = conn.cursor()
+        c.execute('''
+            CREATE TABLE IF NOT EXISTS users (
+                id SERIAL PRIMARY KEY,
+                email TEXT UNIQUE NOT NULL,
+                password TEXT NOT NULL,
+                is_admin INTEGER DEFAULT 0
+            )
+        ''')
+        c.execute('''
+            CREATE TABLE IF NOT EXISTS sheet_data (
+                id INTEGER PRIMARY KEY,
+                data TEXT,
+                readonly_columns TEXT
+            )
+        ''')
+        c.execute('''
+            CREATE TABLE IF NOT EXISTS logs (
+                id SERIAL PRIMARY KEY,
+                user_email TEXT,
+                action TEXT,
+                timestamp TEXT
+            )
+        ''')
+        # Insert default row for sheet_data if not exists
+        c.execute('''
+            INSERT INTO sheet_data (id, data, readonly_columns)
+            VALUES (1, '[]', '')
+            ON CONFLICT (id) DO NOTHING
+        ''')
+        conn.close()
+        print("Database tables created successfully")
+    except Exception as e:
+        print(f"Error in init_db: {e}")
 
 # User class (unchanged)
 class User(UserMixin):
@@ -178,8 +211,18 @@ def logs():
     conn.close()
     return render_template('logs.html', logs=logs)
 
-if __name__ == '__main__':
-    init_db()  # Init DB on start
-    port = int(os.environ.get('PORT', 5000))
+@app.before_first_request
+def create_tables():
+    init_db()
 
+# Also try to init on startup (best effort)
+try:
+    init_db()
+except:
+    pass  # Ignore if already exists or connection issue on startup
+
+if __name__ == '__main__':
+    port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port, debug=True)
+
+
