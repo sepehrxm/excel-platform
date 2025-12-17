@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Dashboard</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/handsontable/dist/handsontable.full.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/handsontable/dist/handsontable.full.min.js"></script>
+</head>
+<body>
+    <h1>Welcome, {{ current_user.email }} {% if is_admin %}(Admin){% endif %}</h1>
+    <a href="/logout">Logout</a> | {% if is_admin %}<a href="/register">Invite/Register User</a> | <a href="/logs">View Logs</a>{% endif %}
+    {% with messages = get_flashed_messages() %}
+        {% if messages %}<ul>{% for message in messages %}<li>{{ message }}</li>{% endfor %}</ul>{% endif %}
+    {% endwith %}
+
+    <h2>Upload Excel</h2>
+    <form method="POST" enctype="multipart/form-data">
+        <input type="file" name="upload">
+        <input type="submit" value="Upload">
+    </form>
+
+    {% if is_admin %}
+    <h2>Set Read-Only Columns</h2>
+    <form method="POST">
+        Columns (comma-separated, e.g., A,B): <input type="text" name="readonly_columns" value="{{ ','.join(readonly_columns) }}">
+        <input type="submit" value="Save">
+    </form>
+    {% endif %}
+
+    <h2>Sheet View</h2>
+    <div id="hot" style="width: 100%; height: 400px; overflow: auto;"></div>
+    <button onclick="saveChanges()">Save Changes</button>
+
+    <script>
+        const data = {{ data | safe }};
+        const readonlyColumns = {{ readonly_columns | tojson | safe }}.map(col => col.charCodeAt(0) - 65);  // e.g., 'A' -> 0
+
+        const container = document.getElementById('hot');
+        const hot = new Handsontable(container, {
+            data: data,
+            rowHeaders: true,
+            colHeaders: true,
+            height: 'auto',
+            width: 'auto',
+            licenseKey: 'non-commercial-and-evaluation',  // For non-commercial use
+            cells: function(row, col, prop) {
+                if (readonlyColumns.includes(col) || row === 0) {  // Headers read-only + specified columns
+                    return { readOnly: true };
+                }
+            }
+        });
+
+        function saveChanges() {
+            const form = document.createElement('form');
+            form.method = 'POST';
+            form.action = '/dashboard';
+            const input = document.createElement('input');
+            input.type = 'hidden';
+            input.name = 'data';
+            input.value = JSON.stringify(hot.getData());
+            form.appendChild(input);
+            const saveInput = document.createElement('input');
+            saveInput.type = 'hidden';
+            saveInput.name = 'save_data';
+            saveInput.value = '1';
+            form.appendChild(saveInput);
+            document.body.appendChild(form);
+            form.submit();
+        }
+    </script>
+</body>
+</html>

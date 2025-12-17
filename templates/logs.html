@@ -1,0 +1,13 @@
+<!DOCTYPE html>
+<html>
+<head><title>Logs</title></head>
+<body>
+    <h1>Change Logs</h1>
+    <a href="/dashboard">Back</a>
+    <ul>
+        {% for log in logs %}
+            <li>{{ log[3] }} - {{ log[1] }}: {{ log[2] }}</li>
+        {% endfor %}
+    </ul>
+</body>
+</html>

@@ -1,0 +1,6 @@
+flask
+flask-login
+openpyxl
+werkzeug
+psycopg2-binary
+gunicorn
