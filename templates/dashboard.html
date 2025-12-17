@@ -19,11 +19,12 @@
         button { padding: 8px 16px; background: #1a73e8; color: white; border: none; border-radius: 4px; cursor: pointer; }
         button:hover { background: #1669c1; }
         input[type="file"] { margin: 10px 0; }
+        .ht_master .htCore thead th { font-weight: bold; background: #f1f3f4; }  /* FIX: Bold headers like Google Sheets */
     </style>
 </head>
 <body>
     <div class="topbar">
-        <h1>Mashhad Leather Pricing Platform</h1>
+        <h1>Excel Platform</h1>
         <div class="user">
             {{ current_user.email }} {% if is_admin %}(Admin){% endif %}
             <a href="/logout">Sign out</a>
@@ -72,14 +73,17 @@
             height: 'auto',
             width: '100%',
             licenseKey: 'non-commercial-and-evaluation',
-            fixedRowsTop: 1,  // Freeze header row like Google Sheets
+            fixedRowsTop: 1,  // FIX: Freeze headers
+            filters: true,  // FIX: Enable column filters
+            dropdownMenu: true,  // FIX: Dropdown for filters/sorting
+            renderer: 'html',  // FIX: Allow HTML (for images)
             cells: function(row, col) {
+                const cellProperties = {};
                 if (row === 0 || readonlyColumns.includes(col)) {
-                    return { readOnly: true, className: 'htReadOnly' };
+                    cellProperties.readOnly = true;
+                    cellProperties.className = 'htReadOnly';  // Gray out read-only
                 }
-            },
-            afterSelectionEnd: function(r, c) {
-                // Optional: subtle selection style
+                return cellProperties;
             }
         });
 
@@ -89,7 +93,9 @@
             const input = document.createElement('input');
             input.type = 'hidden';
             input.name = 'data';
-            input.value = JSON.stringify(hot.getData());
+            // Strip HTML for saving (keep text, or handle as-is if needed)
+            const strippedData = hot.getData().map(row => row.map(cell => cell.replace(/<[^>]+>/g, '')));  // Optional: strip tags on save
+            input.value = JSON.stringify(strippedData);  // Or use hot.getData() if keeping HTML
             form.appendChild(input);
             const saveInput = document.createElement('input');
             saveInput.type = 'hidden';
@@ -102,4 +108,3 @@
     </script>
 </body>
 </html>
-
