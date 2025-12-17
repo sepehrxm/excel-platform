@@ -7,6 +7,7 @@ import os
 from datetime import datetime
 import openpyxl
 import urllib.parse as urlparse
+import ssl  # Add this import at the top if not already there
 
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'super_secret_key')  # Use env var in production
@@ -17,16 +18,16 @@ login_manager.login_view = 'login'
 
 # Database connection function
 def get_db_connection():
-    url = urlparse.urlparse(os.environ['DATABASE_URL'])
+    parsed = urlparse.urlparse(os.environ['DATABASE_URL'])
     conn = psycopg2.connect(
-        database=url.path[1:],
-        user=url.username,
-        password=url.password,
-        host=url.hostname,
-        port=url.port
+        database=parsed.path[1:],
+        user=parsed.username,
+        password=parsed.password,
+        host=parsed.hostname,
+        port=parsed.port,
+        sslmode='require'  # This enables SSL, required by Render Postgres
     )
     return conn
-
 def init_db():
     conn = get_db_connection()
     c = conn.cursor()
@@ -180,4 +181,5 @@ def logs():
 if __name__ == '__main__':
     init_db()  # Init DB on start
     port = int(os.environ.get('PORT', 5000))
+
     app.run(host='0.0.0.0', port=port, debug=True)
