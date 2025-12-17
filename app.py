@@ -140,18 +140,6 @@ def logout():
     logout_user()
     return redirect(url_for('login'))
 
-# TEMPORARY: Secret endpoint to make yourself admin (use once then remove)
-@app.route('/make-me-admin-sepehrxm')
-def make_me_admin():
-    if os.environ.get('RENDER'):  # Only works on Render
-        conn = get_db_connection()
-        c = conn.cursor()
-        c.execute("UPDATE users SET is_admin = 1 WHERE email = 'sepehrxm@gmail.com'")
-        conn.commit()
-        conn.close()
-        return "<h1>You are now admin! 🎉 Delete this endpoint immediately.</h1>"
-    return "Not on Render"
-
 @app.route('/dashboard', methods=['GET', 'POST'])
 @login_required
 def dashboard():
@@ -226,3 +214,4 @@ def logs():
     return render_template('logs.html', logs=logs)
 
 # No if __name__ == '__main__' — Render uses Gunicorn
+
