@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, redirect, url_for, flash, session
+from flask import Flask, render_template, request, redirect, url_for, flash
 from flask_login import LoginManager, UserMixin, login_user, login_required, logout_user, current_user
 from werkzeug.security import generate_password_hash, check_password_hash
 import psycopg2
@@ -7,18 +7,15 @@ import os
 from datetime import datetime
 import openpyxl
 import urllib.parse as urlparse
-import ssl  # Add this import at the top if not already there
-import urllib.parse as urlparse
 
 app = Flask(__name__)
-app.secret_key = os.environ.get('SECRET_KEY', 'super_secret_key')  # Use env var in production
+app.secret_key = os.environ.get('SECRET_KEY', 'super_secret_key_change_in_production')
 
 login_manager = LoginManager()
 login_manager.init_app(app)
 login_manager.login_view = 'login'
 
-# Database connection function
-
+# PostgreSQL connection with SSL (required by Render)
 def get_db_connection():
     parsed = urlparse.urlparse(os.environ['DATABASE_URL'])
     conn = psycopg2.connect(
@@ -29,9 +26,9 @@ def get_db_connection():
         port=parsed.port,
         sslmode='require'
     )
-    conn.autocommit = True  # Important for CREATE TABLE
     return conn
 
+# Database initialization
 def init_db():
     try:
         conn = get_db_connection()
@@ -59,18 +56,26 @@ def init_db():
                 timestamp TEXT
             )
         ''')
-        # Insert default row for sheet_data if not exists
+        # Ensure sheet_data has a row for id=1
         c.execute('''
             INSERT INTO sheet_data (id, data, readonly_columns)
             VALUES (1, '[]', '')
             ON CONFLICT (id) DO NOTHING
         ''')
+        conn.commit()
         conn.close()
-        print("Database tables created successfully")
+        print("Database initialized successfully!")
     except Exception as e:
-        print(f"Error in init_db: {e}")
+        print(f"Error initializing database: {e}")
 
-# User class (unchanged)
+# Initialize DB safely on first request
+@app.before_request
+def initialize_database():
+    if not hasattr(app, 'db_initialized'):
+        init_db()
+        app.db_initialized = True
+
+# User class for Flask-Login
 class User(UserMixin):
     def __init__(self, id, email, is_admin):
         self.id = id
@@ -81,14 +86,13 @@ class User(UserMixin):
 def load_user(user_id):
     conn = get_db_connection()
     c = conn.cursor()
-    c.execute('SELECT * FROM users WHERE id = %s', (user_id,))
+    c.execute('SELECT id, email, is_admin FROM users WHERE id = %s', (user_id,))
     user = c.fetchone()
     conn.close()
     if user:
-        return User(user[0], user[1], user[3])
+        return User(user[0], user[1], user[2])
     return None
 
-# Routes (mostly unchanged, but with psycopg2)
 @app.route('/')
 def index():
     return redirect(url_for('login'))
@@ -100,7 +104,7 @@ def login():
         password = request.form['password']
         conn = get_db_connection()
         c = conn.cursor()
-        c.execute('SELECT * FROM users WHERE email = %s', (email,))
+        c.execute('SELECT id, email, password, is_admin FROM users WHERE email = %s', (email,))
         user = c.fetchone()
         conn.close()
         if user and check_password_hash(user[2], password):
@@ -110,12 +114,9 @@ def login():
         flash('Invalid credentials')
     return render_template('login.html')
 
+# TEMPORARY: Registration open to create first user
 @app.route('/register', methods=['GET', 'POST'])
-#@login_required  # Temporarily comment this out to create first admin
 def register():
-    #if not current_user.is_admin:  # Temporarily comment this out
-    #    flash('Only admins can register users')
-    #    return redirect(url_for('dashboard'))
     if request.method == 'POST':
         email = request.form['email']
         password = generate_password_hash(request.form['password'])
@@ -124,11 +125,13 @@ def register():
         try:
             c.execute('INSERT INTO users (email, password) VALUES (%s, %s)', (email, password))
             conn.commit()
-            flash('User registered')
+            flash('User registered successfully! You can now log in.')
         except psycopg2.IntegrityError:
+            conn.rollback()
             flash('Email already exists')
-        conn.close()
-        return redirect(url_for('dashboard'))
+        finally:
+            conn.close()
+        return redirect(url_for('login'))
     return render_template('register.html')
 
 @app.route('/logout')
@@ -137,6 +140,18 @@ def logout():
     logout_user()
     return redirect(url_for('login'))
 
+# TEMPORARY: Secret endpoint to make yourself admin (use once then remove)
+@app.route('/make-me-admin-sepehrxm')
+def make_me_admin():
+    if os.environ.get('RENDER'):  # Only works on Render
+        conn = get_db_connection()
+        c = conn.cursor()
+        c.execute("UPDATE users SET is_admin = 1 WHERE email = 'sepehrxm@gmail.com'")
+        conn.commit()
+        conn.close()
+        return "<h1>You are now admin! 🎉 Delete this endpoint immediately.</h1>"
+    return "Not on Render"
+
 @app.route('/dashboard', methods=['GET', 'POST'])
 @login_required
 def dashboard():
@@ -144,42 +159,42 @@ def dashboard():
     c = conn.cursor()
     c.execute('SELECT data, readonly_columns FROM sheet_data WHERE id = 1')
     sheet = c.fetchone()
-    data = json.loads(sheet[0]) if sheet else []
+    data = json.loads(sheet[0]) if sheet and sheet[0] else []
     readonly_columns = sheet[1].split(',') if sheet and sheet[1] else []
     conn.close()
 
     if request.method == 'POST':
         if 'upload' in request.files:
             file = request.files['upload']
-            if file.filename.endswith('.xlsx'):
-                filepath = os.path.join('uploads', file.filename)  # Note: On Render, use /tmp or memory for temp files
+            if file and file.filename.endswith('.xlsx'):
+                filepath = os.path.join('/tmp', file.filename)  # Use /tmp on Render
                 file.save(filepath)
                 wb = openpyxl.load_workbook(filepath)
                 ws = wb.active
                 data = [[cell.value for cell in row] for row in ws.iter_rows()]
                 conn = get_db_connection()
                 c = conn.cursor()
-                c.execute('INSERT INTO sheet_data (id, data) VALUES (1, %s) ON CONFLICT (id) DO UPDATE SET data = %s', (json.dumps(data), json.dumps(data)))
+                c.execute('INSERT INTO sheet_data (id, data) VALUES (1, %s) ON CONFLICT (id) DO UPDATE SET data = %s',
+                          (json.dumps(data), json.dumps(data)))
                 conn.commit()
                 conn.close()
-                os.remove(filepath)  # Clean up
-                flash('Excel uploaded')
-            else:
-                flash('Upload .xlsx files only')
+                os.remove(filepath)
+                flash('Excel uploaded successfully')
         elif 'save_data' in request.form:
             new_data = json.loads(request.form['data'])
             conn = get_db_connection()
             c = conn.cursor()
             c.execute('SELECT data FROM sheet_data WHERE id=1')
-            old_data_row = c.fetchone()
-            old_data = json.loads(old_data_row[0]) if old_data_row else []
+            old_row = c.fetchone()
+            old_data = json.loads(old_row[0]) if old_row else []
             changes = []
             for row_idx, row in enumerate(new_data):
                 for col_idx, val in enumerate(row):
-                    if val != old_data[row_idx][col_idx]:
-                        changes.append(f'Cell [{row_idx},{col_idx}] changed from "{old_data[row_idx][col_idx]}" to "{val}"')
+                    old_val = old_data[row_idx][col_idx] if row_idx < len(old_data) and col_idx < len(old_data[row_idx]) else None
+                    if val != old_val:
+                        changes.append(f'Cell [{row_idx},{col_idx}] from "{old_val}" to "{val}"')
             if changes:
-                log_entry = f'User {current_user.email} made changes: ' + '; '.join(changes)
+                log_entry = f'User {current_user.email} changed: ' + '; '.join(changes)
                 c.execute('INSERT INTO logs (user_email, action, timestamp) VALUES (%s, %s, %s)',
                           (current_user.email, log_entry, datetime.now().isoformat()))
             c.execute('UPDATE sheet_data SET data = %s WHERE id=1', (json.dumps(new_data),))
@@ -193,7 +208,6 @@ def dashboard():
             c.execute('UPDATE sheet_data SET readonly_columns = %s WHERE id=1', (readonly,))
             conn.commit()
             conn.close()
-            readonly_columns = readonly.split(',')
             flash('Read-only columns updated')
 
     return render_template('dashboard.html', data=json.dumps(data), readonly_columns=readonly_columns, is_admin=current_user.is_admin)
@@ -206,23 +220,9 @@ def logs():
         return redirect(url_for('dashboard'))
     conn = get_db_connection()
     c = conn.cursor()
-    c.execute('SELECT * FROM logs ORDER BY timestamp DESC')
+    c.execute('SELECT timestamp, user_email, action FROM logs ORDER BY timestamp DESC')
     logs = c.fetchall()
     conn.close()
     return render_template('logs.html', logs=logs)
 
-@app.before_first_request
-def create_tables():
-    init_db()
-
-# Also try to init on startup (best effort)
-try:
-    init_db()
-except:
-    pass  # Ignore if already exists or connection issue on startup
-
-if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 5000))
-    app.run(host='0.0.0.0', port=port, debug=True)
-
-
+# No if __name__ == '__main__' — Render uses Gunicorn
