@@ -6,6 +6,7 @@ import json
 import os
 from datetime import datetime
 import openpyxl
+import base64  # For image base64
 import urllib.parse as urlparse
 
 app = Flask(__name__)
@@ -15,7 +16,7 @@ login_manager = LoginManager()
 login_manager.init_app(app)
 login_manager.login_view = 'login'
 
-# PostgreSQL connection with SSL (required by Render)
+# PostgreSQL connection with SSL
 def get_db_connection():
     parsed = urlparse.urlparse(os.environ['DATABASE_URL'])
     conn = psycopg2.connect(
@@ -75,7 +76,7 @@ def initialize_database():
         init_db()
         app.db_initialized = True
 
-# User class for Flask-Login
+# User class
 class User(UserMixin):
     def __init__(self, id, email, is_admin):
         self.id = id
@@ -114,9 +115,12 @@ def login():
         flash('Invalid credentials')
     return render_template('login.html')
 
-# TEMPORARY: Registration open to create first user
 @app.route('/register', methods=['GET', 'POST'])
+@login_required
 def register():
+    if not current_user.is_admin:
+        flash('Only admins can register new users')
+        return redirect(url_for('dashboard'))
     if request.method == 'POST':
         email = request.form['email']
         password = generate_password_hash(request.form['password'])
@@ -125,13 +129,13 @@ def register():
         try:
             c.execute('INSERT INTO users (email, password) VALUES (%s, %s)', (email, password))
             conn.commit()
-            flash('User registered successfully! You can now log in.')
+            flash('User registered successfully!')
         except psycopg2.IntegrityError:
             conn.rollback()
             flash('Email already exists')
         finally:
             conn.close()
-        return redirect(url_for('login'))
+        return redirect(url_for('dashboard'))
     return render_template('register.html')
 
 @app.route('/logout')
@@ -155,11 +159,32 @@ def dashboard():
         if 'upload' in request.files:
             file = request.files['upload']
             if file and file.filename.endswith('.xlsx'):
-                filepath = os.path.join('/tmp', file.filename)  # Use /tmp on Render
+                filepath = os.path.join('/tmp', file.filename)
                 file.save(filepath)
-                wb = openpyxl.load_workbook(filepath)
+                wb = openpyxl.load_workbook(filepath, data_only=True)  # FIX: Get computed values, not formulas
                 ws = wb.active
-                data = [[cell.value for cell in row] for row in ws.iter_rows()]
+                # Parse cell values
+                data = [[cell.value if cell.value is not None else '' for cell in row] for row in ws.iter_rows()]
+
+                # FIX: Extract and embed images as base64
+                for img in ws._images:
+                    # Get cell position (0-based)
+                    anchor = img.anchor
+                    if hasattr(anchor, 'from_'):  # TwoCellAnchor
+                        row = anchor.from_.row
+                        col = anchor.from_.col
+                    else:  # AbsoluteAnchor (approximate)
+                        row = int(anchor._from.row) if hasattr(anchor, '_from') else 0
+                        col = int(anchor._from.col) if hasattr(anchor, '_from') else 0
+                    # Base64 encode image
+                    img_data = img._data()
+                    mime_type = img.content_type or 'image/png'
+                    base64_img = base64.b64encode(img_data).decode('utf-8')
+                    img_src = f'data:{mime_type};base64,{base64_img}'
+                    # Embed as HTML in cell
+                    if row < len(data) and col < len(data[row]):
+                        data[row][col] = f'<img src="{img_src}" alt="Embedded Image" style="max-width:100px; max-height:100px;">'
+
                 conn = get_db_connection()
                 c = conn.cursor()
                 c.execute('INSERT INTO sheet_data (id, data) VALUES (1, %s) ON CONFLICT (id) DO UPDATE SET data = %s',
@@ -214,4 +239,3 @@ def logs():
     return render_template('logs.html', logs=logs)
 
 # No if __name__ == '__main__' — Render uses Gunicorn
-
